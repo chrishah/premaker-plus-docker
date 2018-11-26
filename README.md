@@ -1,5 +1,5 @@
 # premaker-plus-docker
-Docker image as base for building full MAKER image, plus dependencies and third party software
+Docker image as base for building full [MAKER](http://www.yandell-lab.org/software/maker.html) image, plus dependencies and third party software
 
 In detail, the image is set up with:
  - Ubuntu 18.04
@@ -36,7 +36,7 @@ The image can be pulled from Dockerhub (note the tag) via:
 docker pull chrishah/premaker-plus-docker:v26112018
 ```
 
-or built within the base directory of this repo:
+or built within the base directory of this repo, e.g. via:
 ```bash
 docker build --network=host -t chrishah/premaker-plus-docker .
 ```
