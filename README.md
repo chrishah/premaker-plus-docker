@@ -47,7 +47,7 @@ __Build the fully functioning MAKER image__
 You'll need two more things in your working directory:
  - A copy of the latest [Repbase-derived RepeatMasker libraries](https://www.girinst.org/server/RepBase/index.php), renamed to `repeatmaskerlibraries.tar.gz`
    - this requires free (for academic purposes) registration
-   - once registered, download the latest version via:
+   - once registered, download the latest version, e.g. via:
 ```bash
 wget --user your-user-name \
     --password your-password \

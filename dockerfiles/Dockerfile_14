@@ -1,0 +1,134 @@
+FROM ubuntu:14.04
+
+# This Dockerfile is supposed to produce an image that is set for MAKER with MPI support
+# modified from this gist: https://gist.github.com/TheCulliganMan/f2ffbae313c2b5851b290ae7c2f5b294
+# forked here: https://gist.github.com/chrishah/59d12ec572d10f5f447bd058a77064a2
+# Note that Augustus is not contained
+ 
+# build with: 
+# docker build --network=host -t pre-maker-mpi:14 --file Dockerfile_14 .
+# then:
+# docker build --network=host -t maker-mpi --file Dockerfile_14_final .
+
+
+RUN apt-get update -y
+
+RUN apt-get update -y && \
+    apt-get upgrade -y && \
+    apt-get install -y openssh-server python-mpi4py python-numpy \
+            python-virtualenv python-scipy gcc gfortran openmpi-checkpoint binutils
+
+RUN mkdir /var/run/sshd
+RUN echo 'root:tutorial' | chpasswd
+RUN sed -i 's/PermitRootLogin without-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+
+RUN apt-get install -y --fix-missing \
+    wget \
+    hmmer \
+    build-essential \
+    cmake \
+    g++ \
+    perl \
+    bioperl \
+    cpanminus \
+    ncbi-blast+ \
+    exonerate \
+    openmpi-bin \
+    openmpi-doc \
+    openmpi-common \
+    gcc \
+    gfortran \
+    binutils \
+    libopenmpi-dev \
+    openssh-server \
+    mpich2
+
+RUN apt-get clean -y;
+
+RUN apt-get purge -y;
+
+RUN rm -rf /var/lib.apt/lists/* /tmp/* /var/tmp/*
+
+# Install TRF (for RepeatScout)
+WORKDIR /usr/local/bin
+RUN wget http://tandem.bu.edu/trf/downloads/trf407b.linux64 && mv trf*.linux64 trf && chmod +x trf
+
+# Basic workdir
+WORKDIR /usr/local
+
+# Install nseg (for RepeatScout)
+RUN mkdir nseg && \
+    cd nseg && \
+    wget ftp://ftp.ncbi.nih.gov/pub/seg/nseg/* && \
+    make && \
+    mv nseg ../bin && \
+    mv nmerge ../bin
+
+# Install RepeatScout
+RUN wget http://bix.ucsd.edu/repeatscout/RepeatScout-1.0.5.tar.gz && \
+    tar -xvf RepeatScout* && \
+    rm RepeatScout*.tar.gz && \
+    mv RepeatScout* RepeatScout && \
+    cd RepeatScout && \
+    make
+
+# Install RMBlast
+RUN wget ftp://ftp.ncbi.nlm.nih.gov/blast/executables/rmblast/2.2.28/ncbi-rmblastn-2.2.28-x64-linux.tar.gz && \
+    tar -xzvf ncbi-rmblastn* && \
+    rm ncbi-rmblastn*.tar.gz && \
+    mv ncbi-rmblastn*/bin/rmblastn bin && \
+    rm -rf ncbi-rmblastn
+
+# Install RepeatMasker
+RUN wget http://www.repeatmasker.org/RepeatMasker-open-4-0-7.tar.gz && \
+    tar -xzvf RepeatMasker-open*.tar.gz && \
+    rm -f RepeatMasker-open*.tar.gz
+ADD ./rebuild /usr/local/RepeatMasker
+
+ONBUILD ADD repeatmaskerlibraries.tar.gz /usr/local/RepeatMasker
+
+ONBUILD WORKDIR /usr/local/RepeatMasker
+#The next bit fixes a problem that I have seen when the repeat metadata that ships with Repeatmasker
+#does not match with the embl file that contains the sequences
+ONBUILD RUN echo "Checking Repbase metadata against sequence data" >&2 && \
+        cat Libraries/RMRBSeqs.embl | grep "^ID " | sed 's/^ID   //' | cut -d " " -f 1 | sort -n | uniq | perl -ne 'chomp; print "$_\n$_\n"' > comp1 && \
+        cat Libraries/RMRBMeta.embl | grep "^ID " | sed 's/^ID   //' | cut -d " " -f 1 | sort -n | uniq > comp2 && \
+        cat comp1 comp2 | sort -n | uniq -c | grep "   1 " | sed 's/^ .*1 //' > missing && \
+        for m in $(cat missing); do sed -i "/$m/,/\/\//d" Libraries/RMRBMeta.embl; done && \
+        rm comp1 comp2 missing && \
+        perl ./rebuild
+
+ONBUILD RUN perl -i -0pe 's/^#\!.*perl.*/#\!\/usr\/bin\/perl/g' \
+        RepeatMasker \
+        DateRepeats \
+        ProcessRepeats \
+        RepeatProteinMask \
+        DupMasker \
+        util/queryRepeatDatabase.pl \
+        util/queryTaxonomyDatabase.pl \
+        util/rmOutToGFF3.pl \
+        util/rmToUCSCTables.pl
+
+ONBUILD RUN perl -0p -e 's/\/usr\/local\/hmmer/\/usr\/bin/g;' \
+        -e 's/\/usr\/local\/rmblast/\/usr\/local\/bin/g;' \
+        -e 's/DEFAULT_SEARCH_ENGINE = "crossmatch"/DEFAULT_SEARCH_ENGINE = "ncbi"/g;' \
+        -e 's/TRF_PRGM = ""/TRF_PRGM = "\/usr\/local\/bin\/trf"/g;' RepeatMaskerConfig.tmpl > RepeatMaskerConfig.pm
+
+
+RUN wget http://korflab.ucdavis.edu/Software/snap-2013-11-29.tar.gz
+RUN tar xvf snap-2013-11-29.tar.gz
+WORKDIR /usr/local/snap
+RUN make
+
+WORKDIR /
+RUN cpanm install -f -S DBI DBD::SQLite forks forks::shared File::Which Perl::Unsafe::Signals Bit::Vector Inline::C IO::All IO::Prompt
+
+ENV PATH="/usr/local/RepeatMasker:/usr/local/RepeatScout:/usr/local/snap:${PATH}"
+
+ONBUILD WORKDIR /usr/local
+ONBUILD ADD maker.tar.gz /usr/local
+ONBUILD RUN cd maker/src && \
+        echo "Y\n\n\n" | perl Build.PL && ./Build installdeps && ./Build install && ./Build status
+ENV PATH="/usr/local/maker/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/usr/lib/openmpi/lib"
+ENV LD_PRELOAD="/usr/lib/openmpi/lib/libmpi.so"
